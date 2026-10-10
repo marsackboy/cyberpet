@@ -70,6 +70,20 @@
 </div>
 
 <div class="card">
+  <h2>Red Wi-Fi</h2>
+  <label class="row" style="align-items:center;cursor:pointer">
+    <span style="flex:1">Vigilar red <span class="mut">(detecta ataques · gasta batería)</span></span>
+    <input type="checkbox" id="monitor" style="flex:0 0 auto;width:24px;height:24px">
+  </label>
+  <button id="scan" style="width:100%;margin-top:10px">Buscar redes</button>
+  <select id="nets" style="margin-top:8px;display:none"></select>
+  <input id="wssid" style="margin-top:8px" placeholder="Nombre de la red (SSID)">
+  <input id="wpass" type="password" style="margin-top:8px" placeholder="Contraseña">
+  <button class="primary" id="wsave" style="width:100%;margin-top:8px">Guardar y conectar</button>
+  <div id="wifiState" class="mut" style="margin-top:8px">Wi-Fi sin configurar.</div>
+</div>
+
+<div class="card">
   <h2>Foto en la pantalla</h2>
   <canvas id="cv" width="200" height="200"></canvas>
   <div class="row">
@@ -112,19 +126,40 @@ async function connect() {
     chImg = await svc.getCharacteristic(UUID.img);
     const chSt = await svc.getCharacteristic(UUID.st);
     await chSt.startNotifications();
-    chSt.addEventListener('characteristicvaluechanged', e => renderStatus(e.target.value));
+    chSt.addEventListener('characteristicvaluechanged', e => onNotify(e.target.value));
     dot.classList.add('on');
     log('Conectado a ' + dev.name);
   } catch (e) { log('Error: ' + e.message); }
 }
 
-function renderStatus(dv) {
+function onNotify(dv) {
   let s; try { s = JSON.parse(new TextDecoder().decode(dv)); } catch { return; }
+  if (s.nets) { renderNets(s.nets); return; }   // lista de redes del "Buscar"
+  if (s.alert) { log('ALERTA: ' + s.alert); return; }
+  renderStatus(s);
+}
+
+function renderStatus(s) {
+  if (s.hunger === undefined) return;
   document.getElementById('statusCard').style.display = 'block';
   const bars = [['Comida',100-s.hunger],['Ánimo',s.mood],['Energía',s.energy],['Salud',s.health],['Miedo',s.fear]];
   document.getElementById('stats').innerHTML =
     `<div class="stat" style="grid-column:1/3"><b>estado:</b> ${s.pose}${s.asleep?' (durmiendo)':''}</div>` +
     bars.map(([n,v])=>`<div class="stat"><b>${n}</b><div class="bar"><i style="width:${v}%"></i></div></div>`).join('');
+  // reflejar estado de Wi-Fi / vigilancia
+  if (s.monitor !== undefined && document.activeElement !== monitorCb) monitorCb.checked = s.monitor;
+  const ws = document.getElementById('wifiState');
+  if (s.wifi) ws.textContent = 'Conectado a ' + (s.ssid||'?') + (s.evilTwin ? ' · ⚠ red falsa detectada' : '');
+  else if (s.ssid) ws.textContent = 'Configurado: ' + s.ssid + ' (sin conexión)';
+  else ws.textContent = 'Wi-Fi sin configurar.';
+}
+
+function renderNets(nets) {
+  const sel = document.getElementById('nets');
+  sel.style.display = 'block';
+  sel.innerHTML = '<option value="">— elegí una red —</option>' +
+    nets.sort((a,b)=>b.r-a.r).map(n=>`<option value="${n.s}">${n.s} (${n.r} dBm)${n.e?' 🔒':''}</option>`).join('');
+  log('redes encontradas: ' + nets.length);
 }
 
 document.getElementById('connect').onclick = connect;
@@ -140,6 +175,30 @@ document.querySelectorAll('[data-cmd]').forEach(b => b.onclick = async () => {
   if (!chCmd) return;
   await chCmd.writeValue(enc.encode(b.dataset.cmd));
 });
+
+// ---- Menú Wi-Fi ----
+const monitorCb = document.getElementById('monitor');
+document.getElementById('scan').onclick = async () => {
+  if (!chCmd) { log('conectate primero'); return; }
+  log('buscando redes... (unos segundos)');
+  await chCmd.writeValue(enc.encode('L'));
+};
+document.getElementById('nets').onchange = e => {
+  if (e.target.value) document.getElementById('wssid').value = e.target.value;
+};
+document.getElementById('wsave').onclick = async () => {
+  if (!chCmd) return;
+  const ssid = document.getElementById('wssid').value.trim();
+  const pass = document.getElementById('wpass').value;
+  if (!ssid) { log('elegí o escribí una red'); return; }
+  await chCmd.writeValue(enc.encode('W' + ssid + '\t' + pass));
+  log('red guardada: ' + ssid);
+};
+monitorCb.onchange = async () => {
+  if (!chCmd) { monitorCb.checked = !monitorCb.checked; return; }
+  await chCmd.writeValue(enc.encode('N' + (monitorCb.checked ? '1' : '0')));
+  log('vigilancia ' + (monitorCb.checked ? 'activada' : 'apagada'));
+};
 
 // ---- Foto: cargar, recortar a 200x200, dithering Floyd-Steinberg ----
 const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
