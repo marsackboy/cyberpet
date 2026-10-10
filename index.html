@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>CyberPet · control</title>
+<style>
+  :root { --bg:#0f1115; --card:#1a1d24; --fg:#e8eaed; --mut:#9aa0aa; --acc:#4ade80; --bad:#f87171; --line:#2a2e37; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--fg);
+         padding:16px; max-width:520px; margin:0 auto; }
+  h1 { font-size:20px; margin:4px 0 12px; display:flex; align-items:center; gap:8px; }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--bad); }
+  .dot.on { background:var(--acc); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:14px; margin-bottom:12px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--mut);
+             margin:0 0 10px; }
+  button { font:inherit; border:none; border-radius:10px; padding:12px 14px; background:#2b3442;
+           color:var(--fg); cursor:pointer; }
+  button:active { transform:scale(.97); }
+  button.primary { background:var(--acc); color:#0a0d12; font-weight:600; }
+  button:disabled { opacity:.4; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  .row > * { flex:1; }
+  input, textarea, select { font:inherit; width:100%; padding:11px; border-radius:10px;
+           border:1px solid var(--line); background:#11141a; color:var(--fg); }
+  textarea { resize:none; }
+  .grid { display:grid; grid-template-columns:repeat(2,1fr); gap:8px 14px; }
+  .stat { font-size:13px; }
+  .stat b { color:var(--mut); font-weight:400; }
+  .bar { height:6px; background:#11141a; border-radius:4px; margin-top:3px; overflow:hidden; }
+  .bar > i { display:block; height:100%; background:var(--acc); }
+  canvas { width:200px; height:200px; image-rendering:pixelated; border:1px solid var(--line);
+           border-radius:8px; background:#fff; display:block; margin:10px auto; }
+  .mut { color:var(--mut); font-size:12px; }
+  #log { font-family:ui-monospace,monospace; font-size:11px; color:var(--mut); white-space:pre-wrap;
+         max-height:90px; overflow:auto; }
+  a { color:var(--acc); }
+</style>
+</head>
+<body>
+<h1><span class="dot" id="dot"></span> CyberPet</h1>
+
+<div class="card">
+  <button class="primary" id="connect" style="width:100%">Conectar</button>
+  <div id="log" style="margin-top:10px"></div>
+</div>
+
+<div class="card" id="statusCard" style="display:none">
+  <h2>Estado</h2>
+  <div class="grid" id="stats"></div>
+</div>
+
+<div class="card">
+  <h2>Mensaje</h2>
+  <textarea id="msg" rows="2" maxlength="60" placeholder="Que diga la mascota..."></textarea>
+  <div class="row" style="margin-top:8px">
+    <button class="primary" id="sendMsg">Enviar</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Acciones</h2>
+  <div class="row">
+    <button data-cmd="F">Comer</button>
+    <button data-cmd="P">Jugar</button>
+    <button data-cmd="S">Dormir</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Foto en la pantalla</h2>
+  <canvas id="cv" width="200" height="200"></canvas>
+  <div class="row">
+    <button id="pick">Elegir / sacar foto</button>
+    <button class="primary" id="sendImg" disabled>Mandar a la pantalla</button>
+  </div>
+  <input type="file" accept="image/*" capture="environment" id="file" hidden>
+  <p class="mut">Se recorta a 200×200 y se pasa a blanco y negro con tramado.</p>
+</div>
+
+<div class="card">
+  <h2>Ojos con IA</h2>
+  <p class="mut">Describe la última foto con un modelo de visión y la mascota lo dice.</p>
+  <input id="aikey" type="password" placeholder="OpenRouter API key (se guarda solo en este celular)">
+  <input id="aimodel" style="margin-top:8px" placeholder="modelo (ej: google/gemini-flash-1.5)">
+  <button class="primary" id="ask" style="width:100%;margin-top:8px" disabled>Mirar y opinar</button>
+  <div id="aiout" class="mut" style="margin-top:8px"></div>
+</div>
+
+<script>
+const UUID = {
+  svc: '6d617363-6f74-6100-0000-706574303031',
+  cmd: '6d617363-6f74-6100-0001-706574303031',
+  img: '6d617363-6f74-6100-0002-706574303031',
+  st:  '6d617363-6f74-6100-0003-706574303031',
+};
+let chCmd, chImg, dev;
+const log = (m) => { const l=document.getElementById('log'); l.textContent=(m+'\n'+l.textContent).slice(0,2000); };
+const enc = new TextEncoder();
+const dot = document.getElementById('dot');
+
+async function connect() {
+  if (!navigator.bluetooth) { log('Este navegador no tiene Web Bluetooth. Usa Chrome en Android.'); return; }
+  try {
+    dev = await navigator.bluetooth.requestDevice({ filters:[{ services:[UUID.svc] }] });
+    dev.addEventListener('gattserverdisconnected', () => { dot.classList.remove('on'); log('Desconectado'); });
+    const srv = await dev.gatt.connect();
+    const svc = await srv.getPrimaryService(UUID.svc);
+    chCmd = await svc.getCharacteristic(UUID.cmd);
+    chImg = await svc.getCharacteristic(UUID.img);
+    const chSt = await svc.getCharacteristic(UUID.st);
+    await chSt.startNotifications();
+    chSt.addEventListener('characteristicvaluechanged', e => renderStatus(e.target.value));
+    dot.classList.add('on');
+    log('Conectado a ' + dev.name);
+  } catch (e) { log('Error: ' + e.message); }
+}
+
+function renderStatus(dv) {
+  let s; try { s = JSON.parse(new TextDecoder().decode(dv)); } catch { return; }
+  document.getElementById('statusCard').style.display = 'block';
+  const bars = [['Comida',100-s.hunger],['Ánimo',s.mood],['Energía',s.energy],['Salud',s.health],['Miedo',s.fear]];
+  document.getElementById('stats').innerHTML =
+    `<div class="stat" style="grid-column:1/3"><b>estado:</b> ${s.pose}${s.asleep?' (durmiendo)':''}</div>` +
+    bars.map(([n,v])=>`<div class="stat"><b>${n}</b><div class="bar"><i style="width:${v}%"></i></div></div>`).join('');
+}
+
+document.getElementById('connect').onclick = connect;
+
+document.getElementById('sendMsg').onclick = async () => {
+  const t = document.getElementById('msg').value.trim();
+  if (!t || !chCmd) return;
+  await chCmd.writeValue(enc.encode('M:' + t));
+  log('mensaje enviado');
+};
+
+document.querySelectorAll('[data-cmd]').forEach(b => b.onclick = async () => {
+  if (!chCmd) return;
+  await chCmd.writeValue(enc.encode(b.dataset.cmd));
+});
+
+// ---- Foto: cargar, recortar a 200x200, dithering Floyd-Steinberg ----
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+let packed = null;  // Uint8Array de 5000 bytes, 1 = negro
+document.getElementById('pick').onclick = () => document.getElementById('file').click();
+document.getElementById('file').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const img = new Image();
+  img.onload = () => {
+    const s = Math.min(img.width, img.height);
+    ctx.drawImage(img, (img.width-s)/2, (img.height-s)/2, s, s, 0, 0, 200, 200);
+    dither();
+    document.getElementById('sendImg').disabled = false;
+    document.getElementById('ask').disabled = false;
+  };
+  img.src = URL.createObjectURL(f);
+};
+
+function dither() {
+  const im = ctx.getImageData(0,0,200,200), d = im.data;
+  const g = new Float32Array(200*200);
+  for (let i=0;i<200*200;i++) g[i] = 0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2];
+  for (let y=0;y<200;y++) for (let x=0;x<200;x++) {
+    const i=y*200+x, old=g[i], nw=old<128?0:255, err=old-nw; g[i]=nw;
+    if (x+1<200) g[i+1]+=err*7/16;
+    if (y+1<200){ if(x>0)g[i+199]+=err*3/16; g[i+200]+=err*5/16; if(x+1<200)g[i+201]+=err*1/16; }
+  }
+  packed = new Uint8Array(5000);
+  for (let i=0;i<200*200;i++){ const v=g[i]<128?1:0; if(v) packed[i>>3]|=0x80>>(i&7); // 1 = negro
+    d[i*4]=d[i*4+1]=d[i*4+2]=g[i]; d[i*4+3]=255; }
+  ctx.putImageData(im,0,0);
+}
+
+document.getElementById('sendImg').onclick = async () => {
+  if (!packed || !chImg) return;
+  const CH = 180;
+  await chImg.writeValueWithoutResponse(new Uint8Array([0xFF,0xFF])); // reset
+  for (let off=0; off<packed.length; off+=CH) {
+    const slice = packed.subarray(off, off+CH);
+    const pkt = new Uint8Array(2+slice.length);
+    pkt[0]=off>>8; pkt[1]=off&0xFF; pkt.set(slice,2);
+    await chImg.writeValueWithoutResponse(pkt);
+    await new Promise(r=>setTimeout(r,12));
+  }
+  log('foto enviada ('+packed.length+' bytes)');
+};
+
+// ---- IA de visión por OpenRouter ----
+const keyIn = document.getElementById('aikey'), modelIn = document.getElementById('aimodel');
+keyIn.value = localStorage.getItem('orkey') || '';
+modelIn.value = localStorage.getItem('ormodel') || 'google/gemini-flash-1.5';
+keyIn.onchange = () => localStorage.setItem('orkey', keyIn.value);
+modelIn.onchange = () => localStorage.setItem('ormodel', modelIn.value);
+
+document.getElementById('ask').onclick = async () => {
+  const key = keyIn.value.trim();
+  if (!key) { document.getElementById('aiout').textContent='Falta la API key.'; return; }
+  const out = document.getElementById('aiout'); out.textContent='Mirando...';
+  try {
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method:'POST',
+      headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model: modelIn.value.trim(),
+        messages:[{ role:'user', content:[
+          { type:'text', text:'Sos una mascota virtual curiosa. Mira esta foto y comenta en UNA frase corta en español (máx 55 caracteres), en primera persona, con humor.' },
+          { type:'image_url', image_url:{ url: cv.toDataURL('image/jpeg',0.7) } }
+        ]}],
+        max_tokens: 60,
+      }),
+    });
+    const j = await r.json();
+    const txt = (j.choices?.[0]?.message?.content || 'no pude verlo').trim().slice(0,60);
+    out.textContent = '“'+txt+'”';
+    if (chCmd) await chCmd.writeValue(enc.encode('M:'+txt));
+  } catch(e){ out.textContent='Error: '+e.message; }
+};
+</script>
+</body>
+</html>
