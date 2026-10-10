@@ -95,11 +95,21 @@
 </div>
 
 <div class="card">
-  <h2>Ojos con IA</h2>
-  <p class="mut">Describe la última foto con un modelo de visión y la mascota lo dice.</p>
-  <input id="aikey" type="password" placeholder="OpenRouter API key (se guarda solo en este celular)">
+  <h2>Seguridad · Shodan</h2>
+  <p class="mut">Consulta qué se ve de tu IP pública desde internet. Necesita el Wi-Fi conectado.</p>
+  <button id="shodan" style="width:100%">Revisar mi IP</button>
+  <div id="shodanOut" class="mut" style="margin-top:8px"></div>
+</div>
+
+<div class="card">
+  <h2>Inteligencia artificial</h2>
+  <p class="mut">Usa OpenRouter. La API key queda solo en este celular.</p>
+  <input id="aikey" type="password" placeholder="OpenRouter API key">
   <input id="aimodel" style="margin-top:8px" placeholder="modelo (ej: google/gemini-flash-1.5)">
-  <button class="primary" id="ask" style="width:100%;margin-top:8px" disabled>Mirar y opinar</button>
+  <div class="row" style="margin-top:8px">
+    <button class="primary" id="ask" disabled>Mirar foto y opinar</button>
+    <button id="think">Decir algo</button>
+  </div>
   <div id="aiout" class="mut" style="margin-top:8px"></div>
 </div>
 
@@ -139,8 +149,11 @@ function onNotify(dv) {
   renderStatus(s);
 }
 
+let lastStatus = {};
 function renderStatus(s) {
   if (s.hunger === undefined) return;
+  lastStatus = s;
+  if (s.shodan !== undefined) document.getElementById('shodanOut').textContent = s.shodan || '';
   document.getElementById('statusCard').style.display = 'block';
   const bars = [['Comida',100-s.hunger],['Ánimo',s.mood],['Energía',s.energy],['Salud',s.health],['Miedo',s.fear]];
   document.getElementById('stats').innerHTML =
@@ -246,6 +259,13 @@ document.getElementById('sendImg').onclick = async () => {
   log('foto enviada ('+packed.length+' bytes)');
 };
 
+// ---- Shodan ----
+document.getElementById('shodan').onclick = async () => {
+  if (!chCmd) { log('conectate primero'); return; }
+  document.getElementById('shodanOut').textContent = 'consultando...';
+  await chCmd.writeValue(enc.encode('Q'));
+};
+
 // ---- IA de visión por OpenRouter ----
 const keyIn = document.getElementById('aikey'), modelIn = document.getElementById('aimodel');
 keyIn.value = localStorage.getItem('orkey') || '';
@@ -272,6 +292,36 @@ document.getElementById('ask').onclick = async () => {
     });
     const j = await r.json();
     const txt = (j.choices?.[0]?.message?.content || 'no pude verlo').trim().slice(0,60);
+    out.textContent = '“'+txt+'”';
+    if (chCmd) await chCmd.writeValue(enc.encode('M:'+txt));
+  } catch(e){ out.textContent='Error: '+e.message; }
+};
+
+// Frase de personalidad a partir del estado actual de la mascota.
+document.getElementById('think').onclick = async () => {
+  const key = keyIn.value.trim();
+  if (!key) { document.getElementById('aiout').textContent='Falta la API key.'; return; }
+  const s = lastStatus;
+  const out = document.getElementById('aiout'); out.textContent='Pensando...';
+  const estado = `hambre ${s.hunger}, animo ${s.mood}, energia ${s.energy}, salud ${s.health}, `
+    + `miedo ${s.fear}${s.asleep?', durmiendo':''}`
+    + `${s.monitor?`, vigilando la red (${s.devices||0} equipos${s.evilTwin?', RED FALSA detectada':''}${s.deauth?', ATAQUE deauth':''})`:''}`
+    + `${s.shodan?`, shodan: ${s.shodan}`:''}`;
+  try {
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method:'POST',
+      headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model: modelIn.value.trim(),
+        messages:[{ role:'user', content:
+          `Sos una mascota virtual de ciberseguridad. Tu estado: ${estado}. `
+          + `Decí UNA frase corta en español (máx 55 caracteres), en primera persona, con humor, `
+          + `acorde a tu estado. Solo la frase, sin comillas.` }],
+        max_tokens: 60,
+      }),
+    });
+    const j = await r.json();
+    const txt = (j.choices?.[0]?.message?.content || '...').trim().replace(/^["“]|["”]$/g,'').slice(0,60);
     out.textContent = '“'+txt+'”';
     if (chCmd) await chCmd.writeValue(enc.encode('M:'+txt));
   } catch(e){ out.textContent='Error: '+e.message; }
