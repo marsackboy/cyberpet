@@ -118,6 +118,7 @@
   <h2>Hablar con la mascota</h2>
   <p class="mut">Mantené apretado, hablá, y soltá. Te contesta en pantalla y en voz alta.</p>
   <button class="primary" id="talk" style="width:100%">🎤 Mantené para hablar</button>
+  <button id="tone" style="width:100%;margin-top:8px">🔊 Probar parlante de la placa</button>
   <label class="row" style="align-items:center;margin-top:10px;cursor:pointer">
     <span style="flex:1">Que conteste en voz alta</span>
     <input type="checkbox" id="speak" checked style="flex:0 0 auto;width:24px;height:24px">
@@ -317,6 +318,11 @@ document.getElementById('ask').onclick = async () => {
     out.textContent = '“'+txt+'”';
     if (chCmd) await chCmd.writeValue(enc.encode('M:'+txt));
   } catch(e){ out.textContent='Error: '+e.message; }
+};
+
+document.getElementById('tone').onclick = async () => {
+  if (!chCmd) { voiceOut.textContent = 'conectate primero'; return; }
+  await chCmd.writeValue(enc.encode('T'));
 };
 
 // ---- Hablar con la mascota: voz -> texto -> IA -> pantalla + voz ----
