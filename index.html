@@ -105,7 +105,8 @@
   <h2>Inteligencia artificial</h2>
   <p class="mut">Usa OpenRouter. La API key queda solo en este celular.</p>
   <input id="aikey" type="password" placeholder="OpenRouter API key">
-  <input id="aimodel" style="margin-top:8px" placeholder="modelo (ej: google/gemini-flash-1.5)">
+  <input id="aimodel" style="margin-top:8px" placeholder="modelo de texto (charla/voz)">
+  <input id="aimodelv" style="margin-top:8px" placeholder="modelo de visión (fotos)">
   <div class="row" style="margin-top:8px">
     <button class="primary" id="ask" disabled>Mirar foto y opinar</button>
     <button id="think">Decir algo</button>
@@ -279,10 +280,20 @@ document.getElementById('shodan').onclick = async () => {
 
 // ---- IA de visión por OpenRouter ----
 const keyIn = document.getElementById('aikey'), modelIn = document.getElementById('aimodel');
+const modelVin = document.getElementById('aimodelv');
 keyIn.value = localStorage.getItem('orkey') || '';
-modelIn.value = localStorage.getItem('ormodel') || 'google/gemini-flash-1.5';
+modelIn.value = localStorage.getItem('ormodel') || 'nvidia/nemotron-3-ultra-550b-a55b:free';
+modelVin.value = localStorage.getItem('ormodelv') || 'google/gemma-4-31b-it:free';
 keyIn.onchange = () => localStorage.setItem('orkey', keyIn.value);
 modelIn.onchange = () => localStorage.setItem('ormodel', modelIn.value);
+modelVin.onchange = () => localStorage.setItem('ormodelv', modelVin.value);
+
+// Saca el texto de la respuesta o lanza el error real de OpenRouter.
+function aiText(j) {
+  if (j.error) throw new Error(j.error.message || JSON.stringify(j.error));
+  const m = j.choices?.[0]?.message;
+  return (m?.content || m?.reasoning || '').trim();
+}
 
 document.getElementById('ask').onclick = async () => {
   const key = keyIn.value.trim();
@@ -293,7 +304,7 @@ document.getElementById('ask').onclick = async () => {
       method:'POST',
       headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'},
       body: JSON.stringify({
-        model: modelIn.value.trim(),
+        model: modelVin.value.trim(),
         messages:[{ role:'user', content:[
           { type:'text', text:'Sos una mascota virtual curiosa. Mira esta foto y comenta en UNA frase corta en español (máx 55 caracteres), en primera persona, con humor.' },
           { type:'image_url', image_url:{ url: cv.toDataURL('image/jpeg',0.7) } }
@@ -302,7 +313,7 @@ document.getElementById('ask').onclick = async () => {
       }),
     });
     const j = await r.json();
-    const txt = (j.choices?.[0]?.message?.content || 'no pude verlo').trim().slice(0,60);
+    const txt = (aiText(j) || 'no pude verlo').slice(0,60);
     out.textContent = '“'+txt+'”';
     if (chCmd) await chCmd.writeValue(enc.encode('M:'+txt));
   } catch(e){ out.textContent='Error: '+e.message; }
@@ -346,11 +357,11 @@ async function askPet(userText) {
       }),
     });
     const j = await r.json();
-    const txt = (j.choices?.[0]?.message?.content || 'no te entendí').trim().slice(0,140);
+    const txt = (aiText(j) || 'no te entendí').slice(0,140);
     voiceOut.innerHTML = '<b>Vos:</b> ' + userText + '<br><b>Mascota:</b> ' + txt;
     if (chCmd) await chCmd.writeValue(enc.encode('M:' + txt.slice(0,60)));
     speakOut(txt);
-  } catch(e){ voiceOut.textContent = 'Error: ' + e.message; }
+  } catch(e){ voiceOut.innerHTML = '<b>Vos:</b> ' + userText + '<br>Error: ' + e.message; }
 }
 
 if (!SR) {
@@ -399,7 +410,7 @@ document.getElementById('think').onclick = async () => {
       }),
     });
     const j = await r.json();
-    const txt = (j.choices?.[0]?.message?.content || '...').trim().replace(/^["“]|["”]$/g,'').slice(0,60);
+    const txt = (aiText(j) || '...').replace(/^["“]|["”]$/g,'').slice(0,60);
     out.textContent = '“'+txt+'”';
     if (chCmd) await chCmd.writeValue(enc.encode('M:'+txt));
   } catch(e){ out.textContent='Error: '+e.message; }
