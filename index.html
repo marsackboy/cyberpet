@@ -119,9 +119,13 @@
   <p class="mut">Mantené apretado, hablá, y soltá. Te contesta en pantalla y en voz alta.</p>
   <button class="primary" id="talk" style="width:100%">🎤 Mantené para hablar</button>
   <button id="tone" style="width:100%;margin-top:8px">🔊 Probar parlante de la placa</button>
-  <label class="row" style="align-items:center;margin-top:10px;cursor:pointer">
-    <span style="flex:1">Que conteste en voz alta</span>
-    <input type="checkbox" id="speak" checked style="flex:0 0 auto;width:24px;height:24px">
+  <label class="row" style="align-items:center;margin-top:10px">
+    <span style="flex:1">La voz sale por</span>
+    <select id="voiceDst" style="flex:0 0 auto;width:auto">
+      <option value="esp">la placa</option>
+      <option value="phone">el celular</option>
+      <option value="none">ninguno (solo texto)</option>
+    </select>
   </label>
   <div id="voiceOut" class="mut" style="margin-top:8px"></div>
 </div>
@@ -329,8 +333,14 @@ document.getElementById('tone').onclick = async () => {
 const voiceOut = document.getElementById('voiceOut');
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-function speakOut(txt) {
-  if (!document.getElementById('speak').checked || !window.speechSynthesis) return;
+async function speakOut(txt) {
+  const dst = document.getElementById('voiceDst').value;
+  if (dst === 'none') return;
+  if (dst === 'esp') {                         // la placa lo dice (baja la voz por su WiFi)
+    if (chCmd) await chCmd.writeValue(enc.encode('V:' + txt));
+    return;
+  }
+  if (!window.speechSynthesis) return;         // el celular lo dice
   const u = new SpeechSynthesisUtterance(txt);
   u.lang = 'es-ES';
   const v = speechSynthesis.getVoices().find(v => v.lang.startsWith('es'));
