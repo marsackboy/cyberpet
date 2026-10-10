@@ -113,6 +113,17 @@
   <div id="aiout" class="mut" style="margin-top:8px"></div>
 </div>
 
+<div class="card">
+  <h2>Hablar con la mascota</h2>
+  <p class="mut">Mantené apretado, hablá, y soltá. Te contesta en pantalla y en voz alta.</p>
+  <button class="primary" id="talk" style="width:100%">🎤 Mantené para hablar</button>
+  <label class="row" style="align-items:center;margin-top:10px;cursor:pointer">
+    <span style="flex:1">Que conteste en voz alta</span>
+    <input type="checkbox" id="speak" checked style="flex:0 0 auto;width:24px;height:24px">
+  </label>
+  <div id="voiceOut" class="mut" style="margin-top:8px"></div>
+</div>
+
 <script>
 const UUID = {
   svc: '6d617363-6f74-6100-0000-706574303031',
@@ -296,6 +307,73 @@ document.getElementById('ask').onclick = async () => {
     if (chCmd) await chCmd.writeValue(enc.encode('M:'+txt));
   } catch(e){ out.textContent='Error: '+e.message; }
 };
+
+// ---- Hablar con la mascota: voz -> texto -> IA -> pantalla + voz ----
+const voiceOut = document.getElementById('voiceOut');
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+function speakOut(txt) {
+  if (!document.getElementById('speak').checked || !window.speechSynthesis) return;
+  const u = new SpeechSynthesisUtterance(txt);
+  u.lang = 'es-ES';
+  const v = speechSynthesis.getVoices().find(v => v.lang.startsWith('es'));
+  if (v) u.voice = v;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
+}
+
+async function askPet(userText) {
+  const key = (document.getElementById('aikey').value || '').trim();
+  if (!key) { voiceOut.textContent = 'Falta la API key (tarjeta de arriba).'; return; }
+  const model = (document.getElementById('aimodel').value || 'google/gemini-flash-1.5').trim();
+  voiceOut.innerHTML = '<b>Vos:</b> ' + userText + '<br>Pensando...';
+  const s = lastStatus;
+  try {
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method:'POST',
+      headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model,
+        messages:[
+          { role:'system', content:
+            `Sos una mascota virtual de ciberseguridad, simpatica y con humor. `
+            + `Respondes SIEMPRE en español, en 1 o 2 frases cortas (max 140 caracteres). `
+            + `Tu estado actual: hambre ${s.hunger??'?'}, animo ${s.mood??'?'}, salud ${s.health??'?'}`
+            + `${s.monitor?`, vigilando la red`:''}. Hablas en primera persona.` },
+          { role:'user', content: userText },
+        ],
+        max_tokens: 120,
+      }),
+    });
+    const j = await r.json();
+    const txt = (j.choices?.[0]?.message?.content || 'no te entendí').trim().slice(0,140);
+    voiceOut.innerHTML = '<b>Vos:</b> ' + userText + '<br><b>Mascota:</b> ' + txt;
+    if (chCmd) await chCmd.writeValue(enc.encode('M:' + txt.slice(0,60)));
+    speakOut(txt);
+  } catch(e){ voiceOut.textContent = 'Error: ' + e.message; }
+}
+
+if (!SR) {
+  document.getElementById('talk').disabled = true;
+  voiceOut.textContent = 'Este navegador no reconoce voz. Usá Chrome en Android.';
+} else {
+  const talk = document.getElementById('talk');
+  let rec = null, holding = false;
+  const start = (e) => {
+    e.preventDefault();
+    if (rec) return;
+    rec = new SR(); rec.lang = 'es-ES'; rec.interimResults = false; rec.maxAlternatives = 1;
+    holding = true; talk.textContent = '🎤 Escuchando...';
+    rec.onresult = (ev) => { const t = ev.results[0][0].transcript; askPet(t); };
+    rec.onerror = (ev) => { voiceOut.textContent = 'No te escuché (' + ev.error + ')'; };
+    rec.onend = () => { rec = null; talk.textContent = '🎤 Mantené para hablar'; };
+    try { rec.start(); } catch(_) {}
+  };
+  const stop = (e) => { e.preventDefault(); if (rec && holding) { holding = false; rec.stop(); } };
+  talk.addEventListener('pointerdown', start);
+  talk.addEventListener('pointerup', stop);
+  talk.addEventListener('pointerleave', stop);
+}
 
 // Frase de personalidad a partir del estado actual de la mascota.
 document.getElementById('think').onclick = async () => {
